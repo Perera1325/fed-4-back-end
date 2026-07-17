@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { syncEnergyGenerationRecords } from '../application/background/sync-energy-generation-records';
 import { detectAnomalies } from '../application/background/detect-anomalies';
+import { generateInvoices } from '../application/background/generate-invoices';
 
 export const initializeScheduler = () => {
   const syncSchedule = process.env.SYNC_CRON_SCHEDULE || '0 0 * * *';
@@ -30,4 +31,18 @@ export const initializeScheduler = () => {
   });
 
   console.log(`[Scheduler] Anomaly detection scheduled for: ${anomalySchedule}`);
+
+  const invoiceSchedule = process.env.INVOICE_CRON_SCHEDULE || '30 0 * * *';
+
+  cron.schedule(invoiceSchedule, async () => {
+    console.log(`[${new Date().toISOString()}] Starting invoice generation...`);
+    try {
+      await generateInvoices();
+      console.log(`[${new Date().toISOString()}] Invoice generation completed successfully`);
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Invoice generation failed:`, error);
+    }
+  });
+
+  console.log(`[Scheduler] Invoice generation scheduled for: ${invoiceSchedule}`);
 };
