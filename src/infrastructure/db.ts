@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { SolarUnit } from "./entities/SolarUnit";
 
 export const connectDB = async () => {
   try {
@@ -9,6 +10,10 @@ export const connectDB = async () => {
     }
     await mongoose.connect(MONGODB_URL);
     console.log("Connected to MongoDB");
+
+    // Drop the now-unused unique index on SolarUnit.serialNumber (Mongoose
+    // doesn't retroactively remove indexes that are no longer declared).
+    await SolarUnit.syncIndexes();
   } catch (error) {
     console.log("Error while connecting to MongoDB", error);
   }

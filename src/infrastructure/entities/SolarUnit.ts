@@ -8,7 +8,11 @@ const solarUnitSchema = new mongoose.Schema({
   serialNumber: {
     type: String,
     required: true,
-    unique: true,
+    // Not unique: every new sign-up gets auto-provisioned a demo solar
+    // unit that shares the same underlying serial as the seeded demo
+    // data-api dataset, so multiple accounts intentionally point at the
+    // same physical serial while owning their own SolarUnit document
+    // (and therefore their own independent anomalies/invoices).
   },
   installationDate: {
     type: Date,

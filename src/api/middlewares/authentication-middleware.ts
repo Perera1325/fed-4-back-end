@@ -2,6 +2,14 @@ import { clerkClient, getAuth } from "@clerk/express";
 import { NextFunction, Request, Response } from "express";
 import { UnauthorizedError } from "../../domain/errors/errors";
 import { User } from "../../infrastructure/entities/User";
+import { SolarUnit } from "../../infrastructure/entities/SolarUnit";
+
+const DEMO_SOLAR_UNIT_SERIAL =
+  process.env.DEMO_SOLAR_UNIT_SERIAL || "SU-0001";
+const DEMO_SOLAR_UNIT_INSTALLATION_DATE = new Date("2025-08-01");
+const DEMO_SOLAR_UNIT_CAPACITY_WATTS = process.env.CAPACITY_WATTS
+  ? parseFloat(process.env.CAPACITY_WATTS)
+  : 5000;
 
 export const authenticationMiddleware = async (
   req: Request,
@@ -14,13 +22,8 @@ export const authenticationMiddleware = async (
       throw new UnauthorizedError("Unauthorized");
     }
 
-    // Normally a Clerk webhook (user.created) provisions the local User
-    // record. If that webhook isn't configured yet, or hasn't fired for
-    // some reason, auto-provision the User here on first authenticated
-    // request instead of failing every downstream route with "User not
-    // found".
-    const existingUser = await User.findOne({ clerkUserId: auth.userId });
-    if (!existingUser) {
+    let user = await User.findOne({ clerkUserId: auth.userId });
+    if (!user) {
       const clerkUser = await clerkClient.users.getUser(auth.userId);
       const primaryEmail =
         clerkUser.emailAddresses.find(
@@ -32,13 +35,27 @@ export const authenticationMiddleware = async (
           ? "admin"
           : "staff";
 
-      await User.create({
+      user = await User.create({
         firstName: clerkUser.firstName || "",
         lastName: clerkUser.lastName || "",
         email: primaryEmail,
         clerkUserId: auth.userId,
         role,
       });
+    }
+
+    const existingSolarUnit = await SolarUnit.findOne({ userId: user._id });
+    if (!existingSolarUnit) {
+      await SolarUnit.create({
+        userId: user._id,
+        serialNumber: DEMO_SOLAR_UNIT_SERIAL,
+        installationDate: DEMO_SOLAR_UNIT_INSTALLATION_DATE,
+        capacity: DEMO_SOLAR_UNIT_CAPACITY_WATTS,
+        status: "ACTIVE",
+      });
+      console.log(
+        `Auto-provisioned demo solar unit for new user ${user.get("email")}`
+      );
     }
 
     next();
