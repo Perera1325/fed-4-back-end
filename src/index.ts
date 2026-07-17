@@ -11,6 +11,7 @@ import webhooksRouter from "./api/webhooks";
 import { clerkMiddleware } from "@clerk/express";
 import usersRouter from "./api/users";
 import weatherRouter from "./api/weather";
+import anomalyRouter from "./api/anomaly";
 
 const server = express();
 server.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:5173" }));
@@ -27,6 +28,7 @@ server.use("/api/solar-units", solarUnitRouter);
 server.use("/api/energy-generation-records", energyGenerationRecordRouter);
 server.use("/api/users", usersRouter);
 server.use("/api/weather", weatherRouter);
+server.use("/api/anomalies", anomalyRouter);
 
 server.use(globalErrorHandler);
 
