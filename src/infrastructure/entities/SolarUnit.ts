@@ -23,6 +23,14 @@ const solarUnitSchema = new mongoose.Schema({
     required: true,
     enum: ["ACTIVE", "INACTIVE", "MAINTENANCE"],
   },
+  latitude: {
+    type: Number,
+    required: false,
+  },
+  longitude: {
+    type: Number,
+    required: false,
+  },
 });
 
 export const SolarUnit = mongoose.model("SolarUnit", solarUnitSchema);
