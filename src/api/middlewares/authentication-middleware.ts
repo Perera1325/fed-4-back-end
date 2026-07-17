@@ -3,6 +3,9 @@ import { NextFunction, Request, Response } from "express";
 import { UnauthorizedError } from "../../domain/errors/errors";
 import { User } from "../../infrastructure/entities/User";
 import { SolarUnit } from "../../infrastructure/entities/SolarUnit";
+import { syncEnergyGenerationRecordsForSolarUnit } from "./sync/sync-middleware";
+import { detectAnomaliesForSolarUnit } from "../../application/background/detect-anomalies";
+import { generateInvoicesForSolarUnit } from "../../application/background/generate-invoices";
 
 const DEMO_SOLAR_UNIT_SERIAL =
   process.env.DEMO_SOLAR_UNIT_SERIAL || "SU-0001";
@@ -46,7 +49,7 @@ export const authenticationMiddleware = async (
 
     const existingSolarUnit = await SolarUnit.findOne({ userId: user._id });
     if (!existingSolarUnit) {
-      await SolarUnit.create({
+      const solarUnit = await SolarUnit.create({
         userId: user._id,
         serialNumber: DEMO_SOLAR_UNIT_SERIAL,
         installationDate: DEMO_SOLAR_UNIT_INSTALLATION_DATE,
@@ -56,6 +59,20 @@ export const authenticationMiddleware = async (
       console.log(
         `Auto-provisioned demo solar unit for new user ${user.get("email")}`
       );
+
+      try {
+        await syncEnergyGenerationRecordsForSolarUnit(solarUnit);
+        await detectAnomaliesForSolarUnit(solarUnit);
+        await generateInvoicesForSolarUnit(solarUnit);
+        console.log(
+          `Backfilled energy data, anomalies and invoices for ${user.get("email")}`
+        );
+      } catch (backfillError) {
+        console.error(
+          `Backfill failed for new user ${user.get("email")} (will catch up via daily cron):`,
+          backfillError
+        );
+      }
     }
 
     next();

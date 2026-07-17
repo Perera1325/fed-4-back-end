@@ -5,7 +5,7 @@ import { Invoice } from "../../infrastructure/entities/Invoice";
 
 const DEFAULT_RATE_PER_KWH = 0.15;
 
-async function generateInvoicesForSolarUnit(solarUnit: any) {
+export async function generateInvoicesForSolarUnit(solarUnit: any) {
   const installationDate: Date = solarUnit.get("installationDate");
   if (!installationDate) return;
 

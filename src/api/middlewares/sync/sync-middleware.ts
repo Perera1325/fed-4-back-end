@@ -18,15 +18,51 @@ export const DataAPIEnergyGenerationRecordDto = z.object({
 
 const SYNC_TIMEOUT_MS = 8000;
 
-/**
- * Synchronizes energy generation records from the data API
- * Fetches latest records and merges new data with existing records
- *
- * This is best-effort: if data-api is unreachable or slow (e.g. asleep on
- * a free-tier host), we log it and let the request continue with whatever
- * data already exists locally, rather than failing the whole dashboard
- * load over a sync that isn't strictly required to render the page.
- */
+export async function syncEnergyGenerationRecordsForSolarUnit(solarUnit: any) {
+    const dataApiBaseUrl = process.env.DATA_API_URL || "http://localhost:8001";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
+
+    const dataAPIResponse = await fetch(
+        `${dataApiBaseUrl}/api/energy-generation-records/solar-unit/${solarUnit.serialNumber}`,
+        { signal: controller.signal }
+    );
+    clearTimeout(timeout);
+
+    if (!dataAPIResponse.ok) {
+        throw new Error(
+            `data-api responded with status ${dataAPIResponse.status}`
+        );
+    }
+
+    const latestEnergyGenerationRecords = DataAPIEnergyGenerationRecordDto
+        .array()
+        .parse(await dataAPIResponse.json());
+
+    const lastSyncedRecord = await EnergyGenerationRecord
+        .findOne({ solarUnitId: solarUnit._id })
+        .sort({ timestamp: -1 });
+
+    const newRecords = latestEnergyGenerationRecords.filter(apiRecord => {
+        if (!lastSyncedRecord) return true;
+        return new Date(apiRecord.timestamp) > lastSyncedRecord.timestamp;
+    });
+
+    if (newRecords.length > 0) {
+        const recordsToInsert = newRecords.map(record => ({
+            solarUnitId: solarUnit._id,
+            energyGenerated: record.energyGenerated,
+            timestamp: new Date(record.timestamp),
+            intervalHours: record.intervalHours,
+        }));
+
+        await EnergyGenerationRecord.insertMany(recordsToInsert);
+        console.log(`Synced ${recordsToInsert.length} new energy generation records`);
+    } else {
+        console.log("No new records to sync");
+    }
+}
+
 export const syncMiddleware = async (
   req: Request,
   res: Response,
@@ -45,48 +81,7 @@ export const syncMiddleware = async (
         }
 
         try {
-            const dataApiBaseUrl = process.env.DATA_API_URL || "http://localhost:8001";
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
-
-            const dataAPIResponse = await fetch(
-                `${dataApiBaseUrl}/api/energy-generation-records/solar-unit/${solarUnit.serialNumber}`,
-                { signal: controller.signal }
-            );
-            clearTimeout(timeout);
-
-            if (!dataAPIResponse.ok) {
-                throw new Error(
-                    `data-api responded with status ${dataAPIResponse.status}`
-                );
-            }
-
-            const latestEnergyGenerationRecords = DataAPIEnergyGenerationRecordDto
-                .array()
-                .parse(await dataAPIResponse.json());
-
-            const lastSyncedRecord = await EnergyGenerationRecord
-                .findOne({ solarUnitId: solarUnit._id })
-                .sort({ timestamp: -1 });
-
-            const newRecords = latestEnergyGenerationRecords.filter(apiRecord => {
-                if (!lastSyncedRecord) return true;
-                return new Date(apiRecord.timestamp) > lastSyncedRecord.timestamp;
-            });
-
-            if (newRecords.length > 0) {
-                const recordsToInsert = newRecords.map(record => ({
-                    solarUnitId: solarUnit._id,
-                    energyGenerated: record.energyGenerated,
-                    timestamp: new Date(record.timestamp),
-                    intervalHours: record.intervalHours,
-                }));
-
-                await EnergyGenerationRecord.insertMany(recordsToInsert);
-                console.log(`Synced ${recordsToInsert.length} new energy generation records`);
-            } else {
-                console.log("No new records to sync");
-            }
+            await syncEnergyGenerationRecordsForSolarUnit(solarUnit);
         } catch (syncError) {
             console.error(
                 "Sync with data-api failed (continuing with existing data):",

@@ -207,7 +207,7 @@ async function detectDataGaps(
   }
 }
 
-async function detectAnomaliesForSolarUnit(solarUnit: any) {
+export async function detectAnomaliesForSolarUnit(solarUnit: any) {
   const latestRecord = await EnergyGenerationRecord.findOne({
     solarUnitId: solarUnit._id,
   }).sort({ timestamp: -1 });
