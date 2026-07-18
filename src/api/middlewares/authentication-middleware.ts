@@ -10,56 +10,47 @@ import { syncEnergyGenerationRecordsForSolarUnit } from "./sync/sync-middleware"
 import { detectAnomaliesForSolarUnit } from "../../application/background/detect-anomalies";
 import { generateInvoicesForSolarUnit } from "../../application/background/generate-invoices";
 
-const DEMO_SOLAR_UNIT_SERIAL =
-  process.env.DEMO_SOLAR_UNIT_SERIAL || "SU-0001";
+const DEMO_SOLAR_UNIT_SERIAL = process.env.DEMO_SOLAR_UNIT_SERIAL || "SU-0001";
 const DEMO_SOLAR_UNIT_INSTALLATION_DATE = new Date("2025-08-01");
 const DEMO_SOLAR_UNIT_CAPACITY_WATTS = process.env.CAPACITY_WATTS
   ? parseFloat(process.env.CAPACITY_WATTS)
   : 5000;
 
+// Prevents multiple concurrent requests for the same account from all
+// triggering their own backfill attempt at once (which was hammering
+// data-api with parallel cold-start requests and getting rate-limited).
+const backfillInProgress = new Set<string>();
+
 async function backfillSolarUnitIfNeeded(solarUnit: any) {
-  const hasEnergyData = await EnergyGenerationRecord.exists({
-    solarUnitId: solarUnit._id,
-  });
-  if (!hasEnergyData) {
-    await syncEnergyGenerationRecordsForSolarUnit(solarUnit);
-  }
+  const key = solarUnit._id.toString();
+  if (backfillInProgress.has(key)) return;
+  backfillInProgress.add(key);
+  try {
+    const hasEnergyData = await EnergyGenerationRecord.exists({ solarUnitId: solarUnit._id });
+    if (!hasEnergyData) await syncEnergyGenerationRecordsForSolarUnit(solarUnit);
 
-  const hasAnomalies = await Anomaly.exists({ solarUnitId: solarUnit._id });
-  if (!hasAnomalies) {
-    await detectAnomaliesForSolarUnit(solarUnit);
-  }
+    const hasAnomalies = await Anomaly.exists({ solarUnitId: solarUnit._id });
+    if (!hasAnomalies) await detectAnomaliesForSolarUnit(solarUnit);
 
-  const hasInvoices = await Invoice.exists({ solarUnitId: solarUnit._id });
-  if (!hasInvoices) {
-    await generateInvoicesForSolarUnit(solarUnit);
+    const hasInvoices = await Invoice.exists({ solarUnitId: solarUnit._id });
+    if (!hasInvoices) await generateInvoicesForSolarUnit(solarUnit);
+  } finally {
+    backfillInProgress.delete(key);
   }
 }
 
-export const authenticationMiddleware = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const authenticationMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const auth = getAuth(req);
-    if (!auth.userId) {
-      throw new UnauthorizedError("Unauthorized");
-    }
+    if (!auth.userId) throw new UnauthorizedError("Unauthorized");
 
     let user = await User.findOne({ clerkUserId: auth.userId });
     if (!user) {
       const clerkUser = await clerkClient.users.getUser(auth.userId);
       const primaryEmail =
-        clerkUser.emailAddresses.find(
-          (e) => e.id === clerkUser.primaryEmailAddressId
-        )?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress;
-
-      const role =
-        (clerkUser.publicMetadata as { role?: string })?.role === "admin"
-          ? "admin"
-          : "staff";
-
+        clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)?.emailAddress ||
+        clerkUser.emailAddresses[0]?.emailAddress;
+      const role = (clerkUser.publicMetadata as { role?: string })?.role === "admin" ? "admin" : "staff";
       user = await User.create({
         firstName: clerkUser.firstName || "",
         lastName: clerkUser.lastName || "",
@@ -78,16 +69,11 @@ export const authenticationMiddleware = async (
         capacity: DEMO_SOLAR_UNIT_CAPACITY_WATTS,
         status: "ACTIVE",
       });
-      console.log(
-        `Auto-provisioned demo solar unit for new user ${user.get("email")}`
-      );
+      console.log(`Auto-provisioned demo solar unit for new user ${user.get("email")}`);
     }
 
     backfillSolarUnitIfNeeded(solarUnit).catch((error) => {
-      console.error(
-        `Background backfill failed for ${user.get("email")} (will retry on next request):`,
-        error
-      );
+      console.error(`Background backfill failed for ${user.get("email")} (will retry on next request):`, error);
     });
 
     next();
