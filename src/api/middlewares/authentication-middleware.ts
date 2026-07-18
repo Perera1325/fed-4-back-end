@@ -16,10 +16,28 @@ const DEMO_SOLAR_UNIT_CAPACITY_WATTS = process.env.CAPACITY_WATTS
   ? parseFloat(process.env.CAPACITY_WATTS)
   : 5000;
 
-// Prevents multiple concurrent requests for the same account from all
-// triggering their own backfill attempt at once (which was hammering
-// data-api with parallel cold-start requests and getting rate-limited).
 const backfillInProgress = new Set<string>();
+
+// Copies energy records from any other solar unit that already has data
+// (sharing the same demo serial) straight from Mongo to Mongo. No network
+// call to data-api, so it can't be slow, cold, or rate-limited.
+async function cloneEnergyDataFromExistingUnit(solarUnit: any): Promise<boolean> {
+  const templateUnit = await SolarUnit.findOne({
+    serialNumber: solarUnit.serialNumber,
+    _id: { $ne: solarUnit._id },
+  });
+  if (!templateUnit) return false;
+
+  const templateRecords = await EnergyGenerationRecord.find({ solarUnitId: templateUnit._id }).lean();
+  if (templateRecords.length === 0) return false;
+
+  const clones = templateRecords.map((r: any) => {
+    const { _id, __v, ...rest } = r;
+    return { ...rest, solarUnitId: solarUnit._id };
+  });
+  await EnergyGenerationRecord.insertMany(clones);
+  return true;
+}
 
 async function backfillSolarUnitIfNeeded(solarUnit: any) {
   const key = solarUnit._id.toString();
@@ -27,7 +45,14 @@ async function backfillSolarUnitIfNeeded(solarUnit: any) {
   backfillInProgress.add(key);
   try {
     const hasEnergyData = await EnergyGenerationRecord.exists({ solarUnitId: solarUnit._id });
-    if (!hasEnergyData) await syncEnergyGenerationRecordsForSolarUnit(solarUnit);
+    if (!hasEnergyData) {
+      const cloned = await cloneEnergyDataFromExistingUnit(solarUnit);
+      if (!cloned) {
+        // No existing unit to clone from yet (very first unit ever) — fall
+        // back to the real sync against data-api.
+        await syncEnergyGenerationRecordsForSolarUnit(solarUnit);
+      }
+    }
 
     const hasAnomalies = await Anomaly.exists({ solarUnitId: solarUnit._id });
     if (!hasAnomalies) await detectAnomaliesForSolarUnit(solarUnit);
